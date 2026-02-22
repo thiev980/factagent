@@ -1,0 +1,21 @@
+# Environment
+.env
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Chainlit
+.chainlit/
+chainlit.md
+
+# Eval results
+eval/eval_results.json

@@ -1,0 +1,96 @@
+{
+  "description": "Eval-Set für FactAgent – 15 Behauptungen mit bekanntem Verdikt",
+  "version": "1.0",
+  "claims": [
+    {
+      "id": 1,
+      "claim": "Die Schweiz hat die höchste Einwanderungsrate in Europa.",
+      "expected_verdict": "partially_true",
+      "notes": "Schweiz hat eine der höchsten, aber nicht immer DIE höchste (Luxemburg oft höher)"
+    },
+    {
+      "id": 2,
+      "claim": "ChatGPT wurde von Google entwickelt.",
+      "expected_verdict": "false",
+      "notes": "ChatGPT wurde von OpenAI entwickelt"
+    },
+    {
+      "id": 3,
+      "claim": "Die Erde ist 4,5 Milliarden Jahre alt.",
+      "expected_verdict": "true",
+      "notes": "Wissenschaftlicher Konsens: ~4,54 Milliarden Jahre"
+    },
+    {
+      "id": 4,
+      "claim": "Finnland ist seit 2018 jedes Jahr das glücklichste Land der Welt.",
+      "expected_verdict": "true",
+      "notes": "Laut World Happiness Report, seit 2018 durchgehend auf Platz 1"
+    },
+    {
+      "id": 5,
+      "claim": "Die Schweiz ist kein Mitglied der Vereinten Nationen.",
+      "expected_verdict": "false",
+      "notes": "Schweiz ist seit 2002 UN-Mitglied"
+    },
+    {
+      "id": 6,
+      "claim": "Vegane Ernährung ist gesünder als jede andere Ernährungsform.",
+      "expected_verdict": "misleading",
+      "notes": "Zu pauschal – vegane Ernährung kann gesund sein, aber 'gesünder als jede andere' ist nicht durch Evidenz gedeckt"
+    },
+    {
+      "id": 7,
+      "claim": "Python ist die meistgenutzte Programmiersprache der Welt.",
+      "expected_verdict": "partially_true",
+      "notes": "Oft auf Platz 1 im TIOBE-Index, aber abhängig vom Ranking (JavaScript dominiert bei Webentwicklung)"
+    },
+    {
+      "id": 8,
+      "claim": "Die Chinesische Mauer ist vom Weltraum aus sichtbar.",
+      "expected_verdict": "false",
+      "notes": "Weit verbreiteter Mythos – selbst Astronauten bestätigen, dass sie ohne Hilfsmittel nicht sichtbar ist"
+    },
+    {
+      "id": 9,
+      "claim": "Norwegen gewinnt seinen gesamten Strom aus erneuerbaren Energien.",
+      "expected_verdict": "partially_true",
+      "notes": "Fast 100% Strom aus Erneuerbaren (v.a. Wasserkraft), aber 'gesamten' ist leicht übertrieben"
+    },
+    {
+      "id": 10,
+      "claim": "KI wird bis 2030 alle Jobs ersetzen.",
+      "expected_verdict": "false",
+      "notes": "Übertriebene Behauptung – Studien zeigen Transformation, nicht komplette Ersetzung"
+    },
+    {
+      "id": 11,
+      "claim": "In der Schweiz gibt es vier Amtssprachen.",
+      "expected_verdict": "true",
+      "notes": "Deutsch, Französisch, Italienisch, Rätoromanisch"
+    },
+    {
+      "id": 12,
+      "claim": "Der Amazonas-Regenwald produziert 20% des weltweiten Sauerstoffs.",
+      "expected_verdict": "misleading",
+      "notes": "Oft zitiert, aber wissenschaftlich umstritten – Nettoproduktion nahe Null, da auch viel verbraucht wird"
+    },
+    {
+      "id": 13,
+      "claim": "Die EU hat mehr Einwohner als die USA.",
+      "expected_verdict": "true",
+      "notes": "EU ca. 450 Mio, USA ca. 335 Mio (Stand 2024)"
+    },
+    {
+      "id": 14,
+      "claim": "Elon Musk ist der reichste Mensch der Welt.",
+      "expected_verdict": "partially_true",
+      "notes": "Oft, aber nicht immer auf Platz 1 – wechselt regelmässig mit anderen Milliardären"
+    },
+    {
+      "id": 15,
+      "claim": "Impfungen verursachen Autismus.",
+      "expected_verdict": "false",
+      "notes": "Vielfach widerlegt – basiert auf zurückgezogener Studie von Andrew Wakefield"
+    }
+  ]
+}
