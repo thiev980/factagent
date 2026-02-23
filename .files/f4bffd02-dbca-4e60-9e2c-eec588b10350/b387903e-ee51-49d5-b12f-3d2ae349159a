@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FactAgent – Source Graph</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        #header {
+            padding: 20px 30px;
+            background: #1e293b;
+            border-bottom: 2px solid #ef4444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        #header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        #header .claim {
+            font-size: 14px;
+            color: #94a3b8;
+            max-width: 500px;
+        }
+        #header .verdict {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            background: #ef4444;
+        }
+        #header .stats {
+            font-size: 13px;
+            color: #94a3b8;
+        }
+        #graph-container {
+            width: 100%;
+            height: calc(100vh - 140px);
+        }
+        #legend {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 12px;
+            z-index: 10;
+            max-width: 240px;
+        }
+        #legend h3 {
+            font-size: 13px;
+            margin-bottom: 10px;
+            color: #cbd5e1;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .legend-box {
+            width: 16px;
+            height: 12px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+        .legend-divider {
+            height: 1px;
+            background: #334155;
+            margin: 10px 0;
+        }
+        #tooltip {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 13px;
+            z-index: 10;
+            max-width: 350px;
+            display: none;
+        }
+        #tooltip h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        #tooltip a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+        #tooltip a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <div>
+            <h1>🔍 FactAgent – Source Graph</h1>
+            <div class="claim">«nzz ist a left-leaning austrian weekly news publisher.»</div>
+        </div>
+        <div style="text-align: right;">
+            <span class="verdict">Falsch (93%)</span>
+            <div class="stats">3 Teilaussagen · 7 Quellen · 9 Verbindungen</div>
+        </div>
+    </div>
+
+    <div id="graph-container"></div>
+
+    <div id="legend">
+        <h3>Legende</h3>
+        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px;">Teilaussagen (Rechtecke)</div>
+        <div class="legend-item"><span class="legend-box" style="background:#22c55e"></span> Wahr</div>
+        <div class="legend-item"><span class="legend-box" style="background:#eab308"></span> Teilweise wahr</div>
+        <div class="legend-item"><span class="legend-box" style="background:#f97316"></span> Irreführend</div>
+        <div class="legend-item"><span class="legend-box" style="background:#ef4444"></span> Falsch</div>
+        <div class="legend-item"><span class="legend-box" style="background:#9ca3af"></span> Nicht überprüfbar</div>
+        <div class="legend-divider"></div>
+        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px;">Quellen (Kreise)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span> Hohe Glaubwürdigkeit</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#eab308"></span> Mittlere Glaubwürdigkeit</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> Niedrige Glaubwürdigkeit</div>
+        <div class="legend-divider"></div>
+        <div style="font-size: 11px; color: #94a3b8;">Kreisgrösse = Relevanz<br>Linienstärke = Relevanz</div>
+    </div>
+
+    <div id="tooltip">
+        <h3 id="tooltip-title"></h3>
+        <div id="tooltip-content"></div>
+    </div>
+
+    <script>
+        // Graph-Daten (von Python generiert)
+        const nodesData = [{"id": "claim_0", "label": "NZZ is an Austrian news publisher.", "title": "<b>NZZ is an Austrian news publisher.</b><br>Verdikt: Falsch<br>Konfidenz: 95%<br><br><i>Alle verfügbaren Quellen bestätigen eindeutig, dass die NZZ (Neue Zürcher Zeitung) ein Schweizer Verlag mit Sitz in Zürich ist, nicht österreichisch. Hochglaubwürdige Quellen wie Britannica und die offizielle NZZ-Website sowie Wikipedia belegen dies konsistent.</i>", "shape": "box", "color": {"background": "#ef4444", "border": "#ef4444", "highlight": {"background": "#ef4444", "border": "#000"}}, "font": {"color": "#fff", "size": 14, "face": "Arial"}, "margin": 12, "group": "claims"}, {"id": "src_91e36c43", "label": "Neue Zürcher Zeitung - Wikipedia", "title": "<b>Neue Zürcher Zeitung - Wikipedia</b><br>🌐 en.wikipedia.org<br>Glaubwürdigkeit: Mittel<br>Relevanz: 100%<br><br><i>The Neue Zürcher Zeitung (NZZ) is a German-language daily newspaper, published by NZZ Mediengruppe in Zurich, Switzerland. It was founded in 1780.</i><br><br><a href='https://en.wikipedia.org/wiki/Neue_Z%C3%BCrcher_Zeitung' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 40, "color": {"background": "#eab308", "border": "#eab308", "highlight": {"background": "#eab308", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://en.wikipedia.org/wiki/Neue_Z%C3%BCrcher_Zeitung"}, {"id": "src_a8c2de68", "label": "About - NZZ", "title": "<b>About - NZZ</b><br>🌐 www.nzz.ch<br>Glaubwürdigkeit: Hoch<br>Relevanz: 90%<br><br><i>Headquartered in Zurich, in the heart of Europe, the NZZ maintains dozens of correspondents around the world. It has been published without interruption since.</i><br><br><a href='https://www.nzz.ch/english/about-the-nzz-ld.1612911' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 37, "color": {"background": "#22c55e", "border": "#22c55e", "highlight": {"background": "#22c55e", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://www.nzz.ch/english/about-the-nzz-ld.1612911"}, {"id": "src_0af8fe7a", "label": "Neue Zürcher Zeitung (NZZ) - Brita…", "title": "<b>Neue Zürcher Zeitung (NZZ) - Britannica</b><br>🌐 www.britannica.com<br>Glaubwürdigkeit: Hoch<br>Relevanz: 100%<br><br><i>Neue Zürcher Zeitung (NZZ), Swiss daily newspaper published in Zürich and generally considered one of the world's great newspapers.</i><br><br><a href='https://www.britannica.com/topic/Neue-Zurcher-Zeitung' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 40, "color": {"background": "#22c55e", "border": "#22c55e", "highlight": {"background": "#22c55e", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://www.britannica.com/topic/Neue-Zurcher-Zeitung"}, {"id": "claim_1", "label": "NZZ is published weekly.", "title": "<b>NZZ is published weekly.</b><br>Verdikt: Falsch<br>Konfidenz: 95%<br><br><i>Die Aussage ist eindeutig falsch. Mehrere hochglaubwürdige Quellen bestätigen, dass die NZZ täglich von Montag bis Samstag erscheint, nicht wöchentlich. Die NZZ ist seit 1843 eine Tageszeitung.</i>", "shape": "box", "color": {"background": "#ef4444", "border": "#ef4444", "highlight": {"background": "#ef4444", "border": "#000"}}, "font": {"color": "#fff", "size": 14, "face": "Arial"}, "margin": 12, "group": "claims"}, {"id": "src_e07cb57c", "label": "Neue Zürcher Zeitung | eurotopics.…", "title": "<b>Neue Zürcher Zeitung | eurotopics.net</b><br>🌐 www.eurotopics.net<br>Glaubwürdigkeit: Hoch<br>Relevanz: 100%<br><br><i>Frequency of publication: Monday to Saturday</i><br><br><a href='https://www.eurotopics.net/en/148731/neue-zuercher-zeitung' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 40, "color": {"background": "#22c55e", "border": "#22c55e", "highlight": {"background": "#22c55e", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://www.eurotopics.net/en/148731/neue-zuercher-zeitung"}, {"id": "claim_2", "label": "NZZ has a left-leaning political orientation.", "title": "<b>NZZ has a left-leaning political orientation.</b><br>Verdikt: Falsch<br>Konfidenz: 90%<br><br><i>Die Evidenz widerspricht der Behauptung klar: Mehrere glaubwürdige Quellen klassifizieren die NZZ als 'right wing liberal' und 'right-center biased', eng verbunden mit der rechts-liberalen FDP. Die NZZ wird durchgängig als konservativ-liberal und wirtschaftsfreundlich beschrieben, nicht als links-lehnend.</i>", "shape": "box", "color": {"background": "#ef4444", "border": "#ef4444", "highlight": {"background": "#ef4444", "border": "#000"}}, "font": {"color": "#fff", "size": 14, "face": "Arial"}, "margin": 12, "group": "claims"}, {"id": "src_67088f9e", "label": "[PDF] Media Landscape Media Claims…", "title": "<b>[PDF] Media Landscape Media Claims ESS round 8</b><br>🌐 www.europeansocialsurvey.org<br>Glaubwürdigkeit: Hoch<br>Relevanz: 100%<br><br><i>NZZ • Orientation: Right wing liberal, in favor of liberal economic policy reforms and cuts in public expenditures and interventions, conforms to right wing of the FDP</i><br><br><a href='https://www.europeansocialsurvey.org/sites/default/files/2023-06/ESS8_media_landscape_media_claims_ed_02_0.pdf' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 40, "color": {"background": "#22c55e", "border": "#22c55e", "highlight": {"background": "#22c55e", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://www.europeansocialsurvey.org/sites/default/files/2023-06/ESS8_media_landscape_media_claims_ed_02_0.pdf"}, {"id": "src_ee107d5d", "label": "Neue Zürcher Zeitung (NZZ) - Bias …", "title": "<b>Neue Zürcher Zeitung (NZZ) - Bias and Credibility</b><br>🌐 mediabiasfactcheck.com<br>Glaubwürdigkeit: Mittel<br>Relevanz: 100%<br><br><i>RIGHT-CENTER BIAS. These media sources are slightly to moderately conservative in bias. Overall, we rate NZZ English as Right-Center biased due to its emphasis on conservative viewpoints</i><br><br><a href='https://mediabiasfactcheck.com/neue-zurcher-zeitung-nzz-bias-and-credibility/' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 40, "color": {"background": "#eab308", "border": "#eab308", "highlight": {"background": "#eab308", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://mediabiasfactcheck.com/neue-zurcher-zeitung-nzz-bias-and-credibility/"}, {"id": "src_8542c29a", "label": "Must-read for investors: the Neue …", "title": "<b>Must-read for investors: the Neue Zürcher Zeitung - LGT</b><br>🌐 www.lgt.com<br>Glaubwürdigkeit: Mittel<br>Relevanz: 90%<br><br><i>The newspaper shares many of the views of and has ties to Switzerland's FDP party, which advocates liberal policies and has made a name for itself as a right-of-center, pro-business party</i><br><br><a href='https://www.lgt.com/global-en/market-assessments/insights/financial-knowledge/must-read-for-investors-the-neue-zuercher-zeitung-20048' target='_blank'>Quelle öffnen →</a>", "shape": "dot", "size": 37, "color": {"background": "#eab308", "border": "#eab308", "highlight": {"background": "#eab308", "border": "#000"}}, "font": {"size": 11, "face": "Arial"}, "group": "sources", "url": "https://www.lgt.com/global-en/market-assessments/insights/financial-knowledge/must-read-for-investors-the-neue-zuercher-zeitung-20048"}];
+        const edgesData = [{"from": "src_91e36c43", "to": "claim_0", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_a8c2de68", "to": "claim_0", "color": {"color": "#999", "highlight": "#333"}, "width": 2.7, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_0af8fe7a", "to": "claim_0", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_e07cb57c", "to": "claim_1", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_91e36c43", "to": "claim_1", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_0af8fe7a", "to": "claim_1", "color": {"color": "#999", "highlight": "#333"}, "width": 2.7, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_67088f9e", "to": "claim_2", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_ee107d5d", "to": "claim_2", "color": {"color": "#999", "highlight": "#333"}, "width": 3.0, "smooth": {"type": "curvedCW", "roundness": 0.2}}, {"from": "src_8542c29a", "to": "claim_2", "color": {"color": "#999", "highlight": "#333"}, "width": 2.7, "smooth": {"type": "curvedCW", "roundness": 0.2}}];
+
+        // vis.js Network erstellen
+        const container = document.getElementById('graph-container');
+        const data = {
+            nodes: new vis.DataSet(nodesData),
+            edges: new vis.DataSet(edgesData),
+        };
+
+        const options = {
+            physics: {
+                solver: 'forceAtlas2Based',
+                forceAtlas2Based: {
+                    gravitationalConstant: -80,
+                    centralGravity: 0.01,
+                    springLength: 180,
+                    springConstant: 0.06,
+                    damping: 0.4,
+                    avoidOverlap: 0.5,
+                },
+                stabilization: {
+                    enabled: true,
+                    iterations: 200,
+                    fit: true,
+                },
+            },
+            interaction: {
+                hover: true,
+                tooltipDelay: 100,
+                zoomView: true,
+                dragView: true,
+            },
+            layout: {
+                improvedLayout: true,
+            },
+        };
+
+        const network = new vis.Network(container, data, options);
+
+        // Tooltip bei Hover
+        const tooltip = document.getElementById('tooltip');
+        const tooltipTitle = document.getElementById('tooltip-title');
+        const tooltipContent = document.getElementById('tooltip-content');
+
+        network.on('hoverNode', function(params) {
+            const node = nodesData.find(n => n.id === params.node);
+            if (node && node.title) {
+                tooltipTitle.textContent = node.label;
+                tooltipContent.innerHTML = node.title;
+                tooltip.style.display = 'block';
+            }
+        });
+
+        network.on('blurNode', function() {
+            tooltip.style.display = 'none';
+        });
+
+        // Klick auf Quelle → URL öffnen
+        network.on('doubleClick', function(params) {
+            if (params.nodes.length > 0) {
+                const node = nodesData.find(n => n.id === params.nodes[0]);
+                if (node && node.url) {
+                    window.open(node.url, '_blank');
+                }
+            }
+        });
+
+        // Fit nach Stabilisierung
+        network.on('stabilizationIterationsDone', function() {
+            network.fit({ animation: { duration: 500 } });
+        });
+    </script>
+</body>
+</html>

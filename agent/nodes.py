@@ -1,21 +1,26 @@
 """
-FactAgent – Agent Nodes
-=======================
+FactAgent – Agent Nodes (v2: Async + Streaming)
+================================================
 Jeder Node ist ein eigenständiger Schritt im Agentic Workflow.
 Nodes lesen vom State, führen eine Aktion aus (LLM-Call, Tool-Call),
 und schreiben das Ergebnis zurück in den State.
 
-AI-Engineering-Pattern: Agentic Workflow (ReAct)
-- Jeder Schritt hat eine klare Verantwortung
-- Schritte sind modular und testbar
-- Der Graph orchestriert die Reihenfolge
+AI-Engineering-Patterns:
+- Agentic Workflow (ReAct)
+- Streaming (async Token-by-Token-Ausgabe)
+
+Update v2:
+- Alle Nodes sind jetzt async (für Chainlit-Kompatibilität)
+- Structured Output Calls streamen intern (für Fortschrittsanzeige)
+- Neuer on_token Callback für Live-Updates in der UI
+- stream_claude_text() Generator für die finale Zusammenfassung
 """
 
 import json
 import logging
-from typing import Any
+from typing import Any, AsyncGenerator
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 from agent.models import (
     AgentState,
@@ -40,63 +45,15 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_anthropic_client() -> Anthropic:
-    """Erstellt einen Anthropic-Client (API-Key aus Umgebung)."""
-    return Anthropic()
+def get_async_client() -> AsyncAnthropic:
+    """Erstellt einen async Anthropic-Client (API-Key aus Umgebung)."""
+    return AsyncAnthropic()
 
 
-def call_claude_structured(
-    system_prompt: str,
-    user_prompt: str,
-    response_model: type,
-    model: str = "claude-sonnet-4-20250514",
-    max_tokens: int = 4096,
-) -> Any:
-    """
-    Ruft die Claude API auf und erzwingt strukturierte JSON-Ausgabe.
-    
-    AI-Engineering-Pattern: Structured Output
-    - Wir geben dem LLM das JSON-Schema mit
-    - Das LLM antwortet direkt im gewünschten Format
-    - Pydantic validiert die Antwort
-    
-    Args:
-        system_prompt: System-Prompt mit Rollenanweisung
-        user_prompt: Der eigentliche Task
-        response_model: Pydantic-Model für die Ausgabe
-        model: Claude-Modell (Standard: Sonnet für gutes Preis/Leistung)
-        max_tokens: Max. Tokens in der Antwort
-    
-    Returns:
-        Validierte Pydantic-Model-Instanz
-    """
-    client = get_anthropic_client()
-
-    # JSON-Schema aus dem Pydantic-Model generieren
-    schema = response_model.model_json_schema()
-
-    # System-Prompt um Schema-Anweisung ergänzen
-    full_system = (
-        f"{system_prompt}\n\n"
-        f"## Ausgabeformat (JSON-Schema):\n"
-        f"```json\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n```"
-    )
-
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=full_system,
-        messages=[
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-
-    # Antworttext extrahieren
-    raw_text = response.content[0].text.strip()
-
-    # JSON aus der Antwort extrahieren (manchmal in ```json ... ``` gewrappt)
+def _extract_json(raw_text: str) -> str:
+    """Extrahiert JSON aus einem LLM-Response (entfernt ```json``` Wrapper)."""
+    raw_text = raw_text.strip()
     if raw_text.startswith("```"):
-        # Code-Block entfernen
         lines = raw_text.split("\n")
         json_lines = []
         in_block = False
@@ -108,18 +65,171 @@ def call_claude_structured(
                 break
             elif in_block:
                 json_lines.append(line)
-        raw_text = "\n".join(json_lines)
+        return "\n".join(json_lines)
+    return raw_text
 
-    # Parsen und validieren
-    parsed = json.loads(raw_text)
-    return response_model.model_validate(parsed)
+
+def _repair_json(raw: str) -> str:
+    """
+    Versucht kaputtes JSON zu reparieren.
+    
+    Häufige Probleme bei LLM-Output:
+    - Unescapte Anführungszeichen in Strings
+    - Trailing Commas
+    - Fehlende Klammern am Ende
+    """
+    import re
+
+    # Trailing commas vor } oder ] entfernen
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
+
+    # Versuche einfaches Parsen
+    try:
+        json.loads(raw)
+        return raw
+    except json.JSONDecodeError:
+        pass
+
+    # Fehlende schliessende Klammern ergänzen
+    open_braces = raw.count('{') - raw.count('}')
+    open_brackets = raw.count('[') - raw.count(']')
+    if open_braces > 0:
+        raw += '}' * open_braces
+    if open_brackets > 0:
+        raw += ']' * open_brackets
+
+    return raw
+
+
+async def call_claude_structured(
+    system_prompt: str,
+    user_prompt: str,
+    response_model: type,
+    model: str = "claude-sonnet-4-20250514",
+    max_tokens: int = 4096,
+    on_token: Any = None,
+    max_retries: int = 2,
+) -> Any:
+    """
+    Ruft die Claude API auf mit Streaming und erzwingt strukturierte JSON-Ausgabe.
+    
+    AI-Engineering-Pattern: Structured Output + Streaming + Retry
+    - Tokens werden gestreamt (für Fortschrittsanzeige)
+    - Vollständiger JSON-Response wird am Ende validiert
+    - Bei Parse-Fehlern: JSON-Reparatur + automatischer Retry
+    
+    Args:
+        system_prompt: System-Prompt mit Rollenanweisung
+        user_prompt: Der eigentliche Task
+        response_model: Pydantic-Model für die Ausgabe
+        model: Claude-Modell
+        max_tokens: Max. Tokens in der Antwort
+        on_token: Optional async callback pro Token.
+                  Signatur: async def on_token(token: str, accumulated: str)
+        max_retries: Max. Anzahl Wiederholungsversuche bei Parse-Fehlern
+    
+    Returns:
+        Validierte Pydantic-Model-Instanz
+    """
+    client = get_async_client()
+
+    # JSON-Schema aus dem Pydantic-Model generieren
+    schema = response_model.model_json_schema()
+
+    full_system = (
+        f"{system_prompt}\n\n"
+        f"## Ausgabeformat (JSON-Schema):\n"
+        f"```json\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n```"
+    )
+
+    last_error = None
+
+    for attempt in range(1 + max_retries):
+        try:
+            # Bei Retry: klareren Prompt
+            messages = [{"role": "user", "content": user_prompt}]
+            if attempt > 0:
+                logger.info(f"🔄 Retry {attempt}/{max_retries} nach JSON-Fehler...")
+                messages = [
+                    {"role": "user", "content": user_prompt},
+                    {"role": "assistant", "content": "Ich werde valides JSON ausgeben:"},
+                ]
+
+            # Streaming API Call
+            accumulated = ""
+            async with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=full_system,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    accumulated += text
+                    if on_token:
+                        await on_token(text, accumulated)
+
+            # JSON extrahieren
+            json_text = _extract_json(accumulated)
+
+            # Erst normales Parsen versuchen
+            try:
+                parsed = json.loads(json_text)
+            except json.JSONDecodeError:
+                # JSON-Reparatur versuchen
+                logger.warning(f"⚠️ JSON-Parse-Fehler, versuche Reparatur (Attempt {attempt + 1})")
+                repaired = _repair_json(json_text)
+                parsed = json.loads(repaired)
+
+            return response_model.model_validate(parsed)
+
+        except (json.JSONDecodeError, Exception) as e:
+            last_error = e
+            logger.warning(
+                f"⚠️ Attempt {attempt + 1} fehlgeschlagen: {type(e).__name__}: {e}"
+            )
+            if attempt < max_retries:
+                continue
+
+    # Alle Versuche fehlgeschlagen
+    raise last_error
+
+
+async def stream_claude_text(
+    system_prompt: str,
+    user_prompt: str,
+    model: str = "claude-sonnet-4-20250514",
+    max_tokens: int = 2048,
+) -> AsyncGenerator[str, None]:
+    """
+    Streamt eine Claude-Antwort Token für Token als async Generator.
+    
+    AI-Engineering-Pattern: Streaming
+    - Kein Warten auf die komplette Antwort
+    - User sieht Text in Echtzeit erscheinen
+    - Bessere UX bei langen Antworten
+    
+    Yields:
+        Einzelne Text-Tokens
+    """
+    client = get_async_client()
+
+    async with client.messages.stream(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[
+            {"role": "user", "content": user_prompt},
+        ],
+    ) as stream:
+        async for text in stream.text_stream:
+            yield text
 
 
 # ---------------------------------------------------------------------------
-# Node 1: Claim Decomposer
+# Node 1: Claim Decomposer (async)
 # ---------------------------------------------------------------------------
 
-def decompose_claim(state: dict) -> dict:
+async def decompose_claim(state: dict, on_token=None) -> dict:
     """
     Zerlegt die Behauptung in überprüfbare Teilaussagen.
     
@@ -130,10 +240,11 @@ def decompose_claim(state: dict) -> dict:
     logger.info(f"📝 Zerlege Behauptung: {claim[:80]}...")
 
     try:
-        decomposition = call_claude_structured(
+        decomposition = await call_claude_structured(
             system_prompt=CLAIM_DECOMPOSER_SYSTEM,
             user_prompt=CLAIM_DECOMPOSER_USER.format(claim=claim),
             response_model=ClaimDecomposition,
+            on_token=on_token,
         )
 
         logger.info(
@@ -149,21 +260,23 @@ def decompose_claim(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 2: Evidence Retriever
+# Node 2: Evidence Retriever (sync I/O, async wrapper)
 # ---------------------------------------------------------------------------
 
-def retrieve_evidence(state: dict) -> dict:
+async def retrieve_evidence(state: dict) -> dict:
     """
     Sucht im Web nach Evidenz für jede Teilaussage.
     
     Input:  state["decomposition"] (ClaimDecomposition)
     Output: state["search_results"] (dict: sub_claim → results)
+    
+    Hinweis: Tavily-Client ist synchron, aber die Funktion ist async
+    damit sie in den Chainlit-Event-Loop passt.
     """
     decomposition = state.get("decomposition")
     if not decomposition:
         return {"error": "Keine Zerlegung vorhanden"}
 
-    # Bei Meinungsäusserungen: Kurzschluss
     if decomposition.claim_type == ClaimType.OPINION:
         logger.info("💭 Behauptung ist eine Meinung – begrenzte Faktenprüfung möglich")
 
@@ -178,10 +291,10 @@ def retrieve_evidence(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 3: Evidence Evaluator
+# Node 3: Evidence Evaluator (async + streaming)
 # ---------------------------------------------------------------------------
 
-def evaluate_evidence(state: dict) -> dict:
+async def evaluate_evidence(state: dict, on_token=None) -> dict:
     """
     Bewertet die Evidenz und erstellt Verdicts für jede Teilaussage.
     
@@ -203,7 +316,6 @@ def evaluate_evidence(state: dict) -> dict:
         logger.info(f"⚖️ Bewerte: {claim_text[:60]}...")
 
         if not results:
-            # Keine Ergebnisse → unverifiable
             from agent.models import Verdict, Source
             sub_verdicts.append(SubClaimVerdict(
                 claim=claim_text,
@@ -217,13 +329,14 @@ def evaluate_evidence(state: dict) -> dict:
         try:
             formatted_results = format_search_results_for_prompt(results)
 
-            verdict = call_claude_structured(
+            verdict = await call_claude_structured(
                 system_prompt=EVIDENCE_EVALUATOR_SYSTEM,
                 user_prompt=EVIDENCE_EVALUATOR_USER.format(
                     sub_claim=claim_text,
                     search_results=formatted_results,
                 ),
                 response_model=SubClaimVerdict,
+                on_token=on_token,
             )
 
             sub_verdicts.append(verdict)
@@ -244,14 +357,49 @@ def evaluate_evidence(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 4: Verdict Synthesizer
+# Node 4: Verdict Synthesizer (async + streaming + HITL)
 # ---------------------------------------------------------------------------
 
-def synthesize_verdict(state: dict) -> dict:
+def _format_human_feedback(state: dict) -> str:
+    """Formatiert Human Feedback für den Synthesizer-Prompt."""
+    feedback = state.get("human_feedback")
+
+    if not feedback or not feedback.reviewed:
+        return "Keine menschliche Überprüfung – basiere das Verdikt auf den AI-Bewertungen."
+
+    parts = []
+
+    if feedback.general_comment:
+        parts.append(f"Allgemeiner Kommentar des Users: {feedback.general_comment}")
+
+    corrections = []
+    for fb in feedback.sub_claim_feedback:
+        if fb.corrected_verdict:
+            line = f"  - «{fb.claim}»: AI sagte etwas anderes, User korrigiert zu → {fb.corrected_verdict.value}"
+            if fb.user_comment:
+                line += f" (Begründung: {fb.user_comment})"
+            corrections.append(line)
+        elif fb.user_comment:
+            corrections.append(f"  - «{fb.claim}»: User-Kommentar: {fb.user_comment}")
+
+    if corrections:
+        parts.append("Korrekturen des Users:\n" + "\n".join(corrections))
+    else:
+        parts.append("Der User hat alle AI-Bewertungen bestätigt (keine Korrekturen).")
+
+    return "\n".join(parts) if parts else "Keine Korrekturen."
+
+
+async def synthesize_verdict(state: dict, on_token=None) -> dict:
     """
     Fasst alle Teilbewertungen zu einem Gesamtverdikt zusammen.
+    Berücksichtigt Human-in-the-Loop Feedback, falls vorhanden.
     
-    Input:  state["claim"] + state["sub_verdicts"]
+    AI-Engineering-Pattern: Human-in-the-Loop
+    - Menschliche Korrekturen werden stark gewichtet
+    - Transparente Dokumentation von AI- vs. User-Bewertung
+    
+    Input:  state["claim"] + state["sub_verdicts"] + state["human_feedback"]
     Output: state["final_result"] (FactCheckResult)
     """
     claim = state["claim"]
@@ -260,23 +408,42 @@ def synthesize_verdict(state: dict) -> dict:
     if not sub_verdicts:
         return {"error": "Keine Einzelbewertungen vorhanden"}
 
+    # Human Feedback in die sub_verdicts einarbeiten
+    feedback = state.get("human_feedback")
+    if feedback and feedback.reviewed:
+        for fb in feedback.sub_claim_feedback:
+            if fb.corrected_verdict:
+                # Finde die passende sub_verdict und aktualisiere sie
+                for sv in sub_verdicts:
+                    if sv.claim == fb.claim:
+                        logger.info(
+                            f"👤 User-Korrektur: '{sv.claim[:40]}' "
+                            f"{sv.verdict} → {fb.corrected_verdict}"
+                        )
+                        sv.verdict = fb.corrected_verdict
+                        if fb.user_comment:
+                            sv.reasoning += f" [User-Korrektur: {fb.user_comment}]"
+
     logger.info("📊 Erstelle Gesamtverdikt...")
 
-    # Einzelverdicts als JSON für den Prompt formatieren
     verdicts_json = json.dumps(
         [v.model_dump() for v in sub_verdicts],
         indent=2,
         ensure_ascii=False,
     )
 
+    human_feedback_text = _format_human_feedback(state)
+
     try:
-        result = call_claude_structured(
+        result = await call_claude_structured(
             system_prompt=VERDICT_SYNTHESIZER_SYSTEM,
             user_prompt=VERDICT_SYNTHESIZER_USER.format(
                 original_claim=claim,
                 sub_verdicts=verdicts_json,
+                human_feedback=human_feedback_text,
             ),
             response_model=FactCheckResult,
+            on_token=on_token,
         )
 
         logger.info(

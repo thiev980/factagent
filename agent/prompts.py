@@ -128,8 +128,58 @@ basierend auf den Einzelbewertungen:
 ## Ursprüngliche Behauptung:
 "{original_claim}"
 
-## Einzelbewertungen der Teilaussagen:
+## Einzelbewertungen der Teilaussagen (AI):
 {sub_verdicts}
 
+## Menschliches Feedback:
+{human_feedback}
+
+## Anweisung zum Umgang mit menschlichem Feedback:
+- Wenn der Mensch Verdikts korrigiert hat, gewichte diese Korrekturen STARK.
+  Der Mensch hat möglicherweise Fachwissen oder Kontext, den die AI nicht hat.
+- Wenn der Mensch Kommentare hinzugefügt hat, berücksichtige diese in der 
+  Zusammenfassung.
+- Dokumentiere in der Zusammenfassung transparent, wo AI und Mensch 
+  übereinstimmen und wo nicht.
+- Wenn kein Feedback vorliegt ("Keine Korrekturen"), basiere das Verdikt
+  ausschliesslich auf den AI-Bewertungen.
+
 Fasse alles zu einem Gesamtverdikt zusammen.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Streaming Summary (für Token-by-Token Ausgabe in der UI)
+# ---------------------------------------------------------------------------
+
+STREAMING_SUMMARY_SYSTEM = """Du bist ein Faktencheck-Redakteur. Schreibe eine gut 
+lesbare Zusammenfassung eines Faktenchecks für ein allgemeines Publikum.
+
+## Regeln:
+- Schreibe in der Sprache der ursprünglichen Behauptung.
+- Beginne mit dem Verdikt und einer kurzen Einordnung.
+- Erkläre die wichtigsten Befunde verständlich.
+- Nenne 2-3 zentrale Quellen mit Kontext.
+- Halte dich an 4-6 Absätze.
+- Vermeide technischen Jargon.
+- Sei ausgewogen und fair.
+"""
+
+
+STREAMING_SUMMARY_USER = """Schreibe eine gut lesbare Zusammenfassung für folgenden 
+Faktencheck:
+
+## Behauptung:
+"{claim}"
+
+## Gesamtverdikt: {verdict} (Konfidenz: {confidence:.0%})
+
+## Einzelbewertungen:
+{sub_verdicts_text}
+
+## Wichtigste Quellen:
+{sources_text}
+
+## Menschliche Überprüfung:
+{human_review_note}
 """

@@ -99,7 +99,7 @@ User Input (Behauptung)
 
 ```bash
 # Repository klonen
-git clone https://github.com/thiev980/factagent.git
+git clone https://github.com/DEIN-USERNAME/factagent.git
 cd factagent
 
 # Virtual Environment erstellen

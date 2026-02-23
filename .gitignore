@@ -19,3 +19,11 @@ chainlit.md
 
 # Eval results
 eval/eval_results.json
+
+# Database
+factagent.db
+factagent.db-wal
+factagent.db-shm
+
+# Generated graphs
+graphs/

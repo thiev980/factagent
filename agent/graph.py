@@ -1,24 +1,24 @@
 """
-FactAgent – LangGraph Workflow
-==============================
+FactAgent – LangGraph Workflow (v2: Async)
+==========================================
 Hier wird der Agentic Workflow als Graph definiert.
-LangGraph orchestriert die Reihenfolge der Schritte und
-verwaltet den State zwischen den Nodes.
 
-AI-Engineering-Pattern: Agentic Workflow / State Machine
-- Klare Schritte mit definierten Ein-/Ausgaben
-- Fehlerbehandlung an jedem Übergang
-- Einfach erweiterbar (neue Nodes hinzufügen)
+Update v2:
+- Nodes sind jetzt async → Graph nutzt ainvoke()
+- run_fact_check() ist async und wird vom Eval-Script via asyncio aufgerufen
+- Die Chainlit-App (app.py) ruft Nodes direkt auf für bessere Step-Kontrolle
 """
 
 import logging
-from typing import TypedDict, Optional, Annotated
+from typing import TypedDict, Optional
 
 from langgraph.graph import StateGraph, END
 
 from agent.models import (
     ClaimDecomposition,
+    ClaimType,
     FactCheckResult,
+    HumanFeedback,
     SubClaimVerdict,
 )
 from agent.nodes import (
@@ -32,10 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Graph State (TypedDict für LangGraph)
+# Graph State
 # ---------------------------------------------------------------------------
-# LangGraph verwendet TypedDict statt Pydantic für den State.
-# Die Pydantic-Models werden innerhalb des States als Werte genutzt.
 
 class GraphState(TypedDict, total=False):
     """State, der durch den Workflow fliesst."""
@@ -43,6 +41,7 @@ class GraphState(TypedDict, total=False):
     decomposition: Optional[ClaimDecomposition]
     search_results: dict
     sub_verdicts: list[SubClaimVerdict]
+    human_feedback: Optional[HumanFeedback]
     final_result: Optional[FactCheckResult]
     error: Optional[str]
 
@@ -52,33 +51,21 @@ class GraphState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 def should_continue_after_decomposition(state: GraphState) -> str:
-    """
-    Entscheidet nach der Zerlegung, ob weitergemacht werden soll.
-    
-    Routing-Logik:
-    - Fehler → Ende
-    - Reine Meinungsäusserung → Trotzdem weiter (aber mit Hinweis)
-    - Alles andere → Weiter zur Evidenzsuche
-    """
     if state.get("error"):
         return "error"
-
     decomposition = state.get("decomposition")
     if not decomposition or not decomposition.sub_claims:
         return "error"
-
     return "continue"
 
 
 def should_continue_after_evidence(state: GraphState) -> str:
-    """Entscheidet nach der Evidenzsuche, ob weitergemacht werden soll."""
     if state.get("error"):
         return "error"
     return "continue"
 
 
 def should_continue_after_evaluation(state: GraphState) -> str:
-    """Entscheidet nach der Bewertung, ob weitergemacht werden soll."""
     if state.get("error"):
         return "error"
     if not state.get("sub_verdicts"):
@@ -87,76 +74,62 @@ def should_continue_after_evaluation(state: GraphState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Async Node Wrappers (ohne on_token für Graph-Nutzung)
+# ---------------------------------------------------------------------------
+
+async def _decompose(state: dict) -> dict:
+    return await decompose_claim(state)
+
+async def _retrieve(state: dict) -> dict:
+    return await retrieve_evidence(state)
+
+async def _evaluate(state: dict) -> dict:
+    return await evaluate_evidence(state)
+
+async def _synthesize(state: dict) -> dict:
+    return await synthesize_verdict(state)
+
+
+# ---------------------------------------------------------------------------
 # Graph bauen
 # ---------------------------------------------------------------------------
 
 def build_fact_check_graph() -> StateGraph:
-    """
-    Baut den LangGraph-Workflow für den Faktencheck.
-    
-    Ablauf:
-    ┌──────────────┐    ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-    │  Decompose   │───▶│  Retrieve        │───▶│  Evaluate        │───▶│  Synthesize      │
-    │  Claim       │    │  Evidence         │    │  Evidence        │    │  Verdict         │
-    └──────────────┘    └──────────────────┘    └──────────────────┘    └──────────────────┘
-          │                    │                       │                       │
-          ▼                    ▼                       ▼                       ▼
-        [error]             [error]                 [error]                  [END]
-    """
+    """Baut den LangGraph-Workflow für den Faktencheck."""
 
-    # Graph erstellen
     workflow = StateGraph(GraphState)
 
-    # Nodes hinzufügen
-    workflow.add_node("decompose", decompose_claim)
-    workflow.add_node("retrieve", retrieve_evidence)
-    workflow.add_node("evaluate", evaluate_evidence)
-    workflow.add_node("synthesize", synthesize_verdict)
+    # Nodes hinzufügen (async)
+    workflow.add_node("decompose", _decompose)
+    workflow.add_node("retrieve", _retrieve)
+    workflow.add_node("evaluate", _evaluate)
+    workflow.add_node("synthesize", _synthesize)
 
-    # Startpunkt
     workflow.set_entry_point("decompose")
 
-    # Conditional Edges (Routing)
     workflow.add_conditional_edges(
         "decompose",
         should_continue_after_decomposition,
-        {
-            "continue": "retrieve",
-            "error": END,
-        },
+        {"continue": "retrieve", "error": END},
     )
-
     workflow.add_conditional_edges(
         "retrieve",
         should_continue_after_evidence,
-        {
-            "continue": "evaluate",
-            "error": END,
-        },
+        {"continue": "evaluate", "error": END},
     )
-
     workflow.add_conditional_edges(
         "evaluate",
         should_continue_after_evaluation,
-        {
-            "continue": "synthesize",
-            "error": END,
-        },
+        {"continue": "synthesize", "error": END},
     )
-
-    # Synthesize → Ende
     workflow.add_edge("synthesize", END)
 
     return workflow.compile()
 
 
-# ---------------------------------------------------------------------------
-# Convenience: Graph einmal kompilieren
-# ---------------------------------------------------------------------------
-
-def run_fact_check(claim: str) -> GraphState:
+async def run_fact_check(claim: str) -> GraphState:
     """
-    Führt den kompletten Faktencheck für eine Behauptung durch.
+    Führt den kompletten Faktencheck async durch.
     
     Args:
         claim: Die zu überprüfende Behauptung
@@ -171,11 +144,11 @@ def run_fact_check(claim: str) -> GraphState:
         "decomposition": None,
         "search_results": {},
         "sub_verdicts": [],
+        "human_feedback": None,
         "final_result": None,
         "error": None,
     }
 
-    # Graph ausführen
-    final_state = graph.invoke(initial_state)
-
+    # Async Graph ausführen
+    final_state = await graph.ainvoke(initial_state)
     return final_state

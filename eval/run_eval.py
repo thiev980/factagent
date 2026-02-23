@@ -1,19 +1,16 @@
 """
-FactAgent – Evaluation Script
-==============================
-Dieses Script testet den Agenten gegen das Eval-Set und
-berechnet die Accuracy.
+FactAgent – Evaluation Script (v2: Async)
+==========================================
+Testet den Agenten gegen das Eval-Set und berechnet die Accuracy.
 
-AI-Engineering-Pattern: Evaluation
-- Systematisches Testen mit bekannten Verdikten
-- Accuracy-Berechnung
-- Logging der Ergebnisse für Analyse
+Update v2: Nutzt asyncio, weil die Nodes jetzt async sind.
 
 Nutzung:
     python -m eval.run_eval
-    python -m eval.run_eval --limit 5  # Nur erste 5 Claims
+    python -m eval.run_eval --limit 5
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -21,7 +18,6 @@ import argparse
 import logging
 from pathlib import Path
 
-# Damit imports aus dem Projektroot funktionieren
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
@@ -40,8 +36,8 @@ def load_eval_set(path: str = "eval/eval_set.json") -> list[dict]:
     return data["claims"]
 
 
-def run_evaluation(limit: int | None = None):
-    """Führt die Evaluation durch und gibt Ergebnisse aus."""
+async def run_evaluation(limit: int | None = None):
+    """Führt die Evaluation async durch und gibt Ergebnisse aus."""
     claims = load_eval_set()
     if limit:
         claims = claims[:limit]
@@ -63,7 +59,7 @@ def run_evaluation(limit: int | None = None):
 
         start = time.time()
         try:
-            state = run_fact_check(claim)
+            state = await run_fact_check(claim)
             elapsed = time.time() - start
 
             if state.get("final_result"):
@@ -121,7 +117,6 @@ def run_evaluation(limit: int | None = None):
     print(f"  Accuracy: {correct}/{total} = {accuracy:.0%}")
     print(f"{'='*60}")
 
-    # Ergebnisse speichern
     output_path = "eval/eval_results.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -137,4 +132,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FactAgent Evaluation")
     parser.add_argument("--limit", type=int, help="Nur N Claims testen")
     args = parser.parse_args()
-    run_evaluation(limit=args.limit)
+    asyncio.run(run_evaluation(limit=args.limit))

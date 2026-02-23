@@ -138,6 +138,46 @@ class FactCheckResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Human-in-the-Loop Feedback
+# ---------------------------------------------------------------------------
+
+class SubClaimFeedback(BaseModel):
+    """Feedback des Users zu einer einzelnen Teilaussage."""
+    claim: str = Field(description="Die betroffene Teilaussage")
+    corrected_verdict: Optional[Verdict] = Field(
+        default=None,
+        description="Vom User korrigiertes Verdikt (None = AI-Verdikt akzeptiert)",
+    )
+    user_comment: Optional[str] = Field(
+        default=None,
+        description="Optionaler Kommentar/Kontext des Users",
+    )
+
+
+class HumanFeedback(BaseModel):
+    """
+    Gesammeltes Feedback des Users nach der Evidenzbewertung.
+    
+    AI-Engineering-Pattern: Human-in-the-Loop
+    - Der Mensch kann AI-Entscheidungen korrigieren
+    - Feedback fliesst in die finale Synthese ein
+    - Transparenz: AI-Verdikt vs. User-Korrektur wird dokumentiert
+    """
+    reviewed: bool = Field(
+        default=False,
+        description="Hat der User die Bewertungen aktiv überprüft?",
+    )
+    sub_claim_feedback: list[SubClaimFeedback] = Field(
+        default_factory=list,
+        description="Feedback pro Teilaussage",
+    )
+    general_comment: Optional[str] = Field(
+        default=None,
+        description="Allgemeiner Kommentar des Users zur Behauptung",
+    )
+
+
+# ---------------------------------------------------------------------------
 # LangGraph State
 # ---------------------------------------------------------------------------
 
@@ -150,5 +190,6 @@ class AgentState(BaseModel):
     decomposition: Optional[ClaimDecomposition] = None
     search_results: dict[str, list[dict]] = Field(default_factory=dict)
     sub_verdicts: list[SubClaimVerdict] = Field(default_factory=list)
+    human_feedback: Optional[HumanFeedback] = None
     final_result: Optional[FactCheckResult] = None
     error: Optional[str] = None
