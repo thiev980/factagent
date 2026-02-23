@@ -13,14 +13,26 @@ license: mit
 
 Ein AI-powered Faktencheck-Tool, das Behauptungen automatisch zerlegt, im Web recherchiert, Quellen bewertet und ein strukturiertes Verdikt liefert.
 
-**[Live Demo →](#)** · **[Portfolio →](#)**
+**[▶ Live Demo →](https://thiev980-factagent.hf.space)**
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Claude API](https://img.shields.io/badge/LLM-Claude%20API-orange)
 ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-green)
 ![Chainlit](https://img.shields.io/badge/Frontend-Chainlit-purple)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
+
+<!-- Screenshots: ersetze die Platzhalter mit deinen eigenen Bildern -->
+<p align="center">
+  <img src="docs/screenshot-verdict.png" alt="FactAgent Verdict" width="700">
+</p>
+<p align="center"><em>FactAgent zerlegt Behauptungen, recherchiert Quellen und liefert ein strukturiertes Verdikt</em></p>
+
+<p align="center">
+  <img src="docs/screenshot-source-graph.png" alt="Source Graph" width="700">
+</p>
+<p align="center"><em>Interaktiver Source Graph: Welche Quellen stützen welche Teilaussagen?</em></p>
 
 ## Was macht FactAgent?
 
