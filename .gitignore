@@ -27,3 +27,6 @@ factagent.db-shm
 
 # Generated graphs
 graphs/
+
+# Cheat sheets
+git-cheatsheet.md

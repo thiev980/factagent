@@ -28,8 +28,16 @@ git branch -M main (branch korrekt setzen)
 git push -u origin main (erster push)
 
 # HF Spaces als zweites Remote hinzufügen
+unter huggingface.co/new-space new space anlegen 
+unter huggingface.co/settings/tokens new token factagent-deploy anlegen
+
+git add .
+git commit -m "Add HF Spaces deployment"
+git tag -a v6.0 -m "Deployment-ready for Hugging Face Spaces"
+
 git remote add hf https://huggingface.co/spaces/thiev980/factagent
-git push hf main
+git remote set-url hf https://thiev980:hf_DEIN_TOKEN@huggingface.co/spaces/thiev980/factagent
+git push hf main (allenfalls git push hf main --force)
 
 ## Tags
 git tag -a v5.0 -m "Feature-complete: Streaming, HITL, History DB, Source Graph"
