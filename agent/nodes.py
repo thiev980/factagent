@@ -77,28 +77,144 @@ def _repair_json(raw: str) -> str:
     - Unescapte Anführungszeichen in Strings
     - Trailing Commas
     - Fehlende Klammern am Ende
+    - Newlines in Strings
+    - Einfache statt doppelte Anführungszeichen
     """
     import re
 
-    # Trailing commas vor } oder ] entfernen
+    # Schritt 1: Einfache Anführungszeichen durch doppelte ersetzen
+    # (nur als äussere String-Delimiter, nicht innerhalb von Strings)
+    if raw.count("'") > raw.count('"'):
+        raw = raw.replace("'", '"')
+
+    # Schritt 2: Trailing commas vor } oder ] entfernen
     raw = re.sub(r',\s*([}\]])', r'\1', raw)
 
-    # Versuche einfaches Parsen
+    # Schritt 3: Versuche einfaches Parsen
     try:
         json.loads(raw)
         return raw
     except json.JSONDecodeError:
         pass
 
-    # Fehlende schliessende Klammern ergänzen
-    open_braces = raw.count('{') - raw.count('}')
-    open_brackets = raw.count('[') - raw.count(']')
-    if open_braces > 0:
-        raw += '}' * open_braces
-    if open_brackets > 0:
-        raw += ']' * open_brackets
+    # Schritt 4: Unescapte Anführungszeichen in String-Werten fixen
+    # Strategie: Zeilenweise durch den JSON-Text gehen und
+    # Anführungszeichen innerhalb von String-Werten escapen
+    raw = _fix_unescaped_quotes(raw)
+
+    # Schritt 5: Unescapte Newlines in Strings fixen
+    raw = _fix_newlines_in_strings(raw)
+
+    # Schritt 6: Fehlende schliessende Klammern ergänzen (stack-basiert)
+    bracket_stack = []
+    in_str = False
+    for j, ch in enumerate(raw):
+        if ch == '\\' and in_str:
+            continue
+        if ch == '"' and (j == 0 or raw[j-1] != '\\'):
+            in_str = not in_str
+        if in_str:
+            continue
+        if ch in '{[':
+            bracket_stack.append('}' if ch == '{' else ']')
+        elif ch in '}]' and bracket_stack:
+            bracket_stack.pop()
+
+    # Stack rückwärts schliessen (innerste zuerst)
+    if bracket_stack:
+        raw += ''.join(reversed(bracket_stack))
+
+    # Schritt 7: Nochmals trailing commas (nach anderen Fixes)
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
 
     return raw
+
+
+def _fix_unescaped_quotes(raw: str) -> str:
+    """
+    Repariert unescapte Anführungszeichen innerhalb von JSON-String-Werten.
+    
+    z.B.: {"text": "Er sagte "Hallo" zu ihr"}
+    →     {"text": "Er sagte \"Hallo\" zu ihr"}
+    
+    Strategie: Character-by-character durch den Text gehen und
+    zwischen "strukturellen" und "inhaltlichen" Quotes unterscheiden.
+    """
+    result = []
+    i = 0
+    in_string = False
+    
+    while i < len(raw):
+        char = raw[i]
+        
+        if char == '\\' and in_string:
+            # Escaped character – übernehmen und nächstes Zeichen überspringen
+            result.append(char)
+            if i + 1 < len(raw):
+                i += 1
+                result.append(raw[i])
+            i += 1
+            continue
+        
+        if char == '"':
+            if not in_string:
+                # String beginnt
+                in_string = True
+                result.append(char)
+            else:
+                # Sind wir am Ende eines Strings?
+                # Schaue voraus: nach einem String-Ende kommt
+                # Whitespace + eines von: , } ] :
+                rest = raw[i + 1:].lstrip()
+                if not rest or rest[0] in ',}]:':
+                    # Strukturelles Quote → String endet
+                    in_string = False
+                    result.append(char)
+                else:
+                    # Inhaltliches Quote → escapen
+                    result.append('\\"')
+            i += 1
+            continue
+        
+        result.append(char)
+        i += 1
+    
+    return ''.join(result)
+
+
+def _fix_newlines_in_strings(raw: str) -> str:
+    """
+    Ersetzt echte Newlines innerhalb von JSON-Strings durch \\n.
+    """
+    result = []
+    in_string = False
+    i = 0
+    
+    while i < len(raw):
+        char = raw[i]
+        
+        if char == '\\' and in_string and i + 1 < len(raw):
+            result.append(char)
+            i += 1
+            result.append(raw[i])
+            i += 1
+            continue
+        
+        if char == '"':
+            in_string = not in_string
+            result.append(char)
+            i += 1
+            continue
+        
+        if char == '\n' and in_string:
+            result.append('\\n')
+            i += 1
+            continue
+        
+        result.append(char)
+        i += 1
+    
+    return ''.join(result)
 
 
 async def call_claude_structured(
@@ -139,7 +255,10 @@ async def call_claude_structured(
     full_system = (
         f"{system_prompt}\n\n"
         f"## Ausgabeformat (JSON-Schema):\n"
-        f"```json\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n```"
+        f"```json\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"WICHTIG: Antworte ausschliesslich mit validem JSON. "
+        f"Alle Anführungszeichen innerhalb von String-Werten "
+        f'MÜSSEN mit \\" escaped werden. Beispiel: "Er sagte \\"Hallo\\" zu ihr"'
     )
 
     last_error = None
@@ -151,8 +270,12 @@ async def call_claude_structured(
             if attempt > 0:
                 logger.info(f"🔄 Retry {attempt}/{max_retries} nach JSON-Fehler...")
                 messages = [
-                    {"role": "user", "content": user_prompt},
-                    {"role": "assistant", "content": "Ich werde valides JSON ausgeben:"},
+                    {"role": "user", "content": (
+                        f"{user_prompt}\n\n"
+                        "WICHTIG: Antworte NUR mit validem JSON. "
+                        "Alle Anführungszeichen innerhalb von String-Werten "
+                        'MÜSSEN mit \\" escaped werden. Keine Erklärungen, nur JSON.'
+                    )},
                 ]
 
             # Streaming API Call

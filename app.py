@@ -50,6 +50,7 @@ from agent.database import (
     get_stats,
 )
 from agent.source_graph import generate_graph_html
+from agent.rate_limiter import rate_limiter, validate_claim
 
 # .env laden (API-Keys)
 load_dotenv()
@@ -383,6 +384,19 @@ async def on_message(message: cl.Message):
         ).send()
         return
 
+    # ---- Input-Validierung ----
+    valid, validation_msg = validate_claim(claim)
+    if not valid:
+        await cl.Message(content=validation_msg).send()
+        return
+
+    # ---- Rate Limiting ----
+    session_id = cl.context.session.id if cl.context.session else "unknown"
+    allowed, limit_msg = rate_limiter.check(session_id)
+    if not allowed:
+        await cl.Message(content=limit_msg).send()
+        return
+
     # ---- Datenbank-Check: Wurde diese Behauptung schon geprüft? ----
     exact_match = find_exact_claim(claim)
     if exact_match and exact_match["result"]:
@@ -636,6 +650,7 @@ async def on_message(message: cl.Message):
         await cl.Message(
             content=f"💾 *Ergebnis gespeichert (#{db_id}, {check_duration:.1f}s)*"
         ).send()
+        rate_limiter.record(session_id)
     except Exception as e:
         logger.error(f"❌ Fehler beim Speichern: {e}")
         await cl.Message(content=f"⚠️ *Speichern fehlgeschlagen: {e}*").send()

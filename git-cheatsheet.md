@@ -27,6 +27,15 @@ git remote -v (prüfen)
 git branch -M main (branch korrekt setzen)
 git push -u origin main (erster push)
 
+# HF Spaces als zweites Remote hinzufügen
+git remote add hf https://huggingface.co/spaces/thiev980/factagent
+git push hf main
+
+## Tags
+git tag -a v5.0 -m "Feature-complete: Streaming, HITL, History DB, Source Graph"
+git push origin v5.0
+git checkout v5.0 --> zu diesem Stand zurückkehren
+
 ## Push rejected / divergent branches
 git pull --rebase origin master
 git status (solve if necessary)
